@@ -10,6 +10,7 @@ mod faculty;
 mod github;
 mod images;
 mod profile;
+mod realtime;
 mod roadmap;
 mod router;
 mod state;

@@ -1,4 +1,4 @@
-# Local Postgres for development. Start with: docker compose up -d
+# Postgres + LiveKit untuk pengembangan lokal. Start with: docker compose up -d
 services:
   db:
     image: postgres:16-alpine
@@ -16,6 +16,19 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+
+  # SFU media server untuk panggilan grup (mic + video). Backend hanya mencetak
+  # access token; media mengalir langsung antara klien dan LiveKit.
+  livekit:
+    image: livekit/livekit-server:latest
+    container_name: sepaham-livekit
+    command: ["--config", "/livekit.yaml"]
+    volumes:
+      - ./livekit.yaml:/livekit.yaml:ro
+    ports:
+      - "7880:7880"       # HTTP + signaling (WebSocket)
+      - "7881:7881"       # RTC over TCP
+      - "7882:7882/udp"   # RTC over UDP
 
 volumes:
   sepaham_pgdata:

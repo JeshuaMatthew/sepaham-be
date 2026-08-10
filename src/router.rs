@@ -8,7 +8,9 @@ use tower_http::trace::TraceLayer;
 
 use crate::images::UPLOADS_DIR;
 use crate::state::AppState;
-use crate::{auth, catalog, chat, collab, community, faculty, github, profile, roadmap};
+use crate::{
+    auth, catalog, chat, collab, community, faculty, github, profile, realtime, roadmap,
+};
 
 /// Build the full application router with all routes and middleware.
 pub fn build(state: AppState) -> Router {
@@ -23,7 +25,8 @@ pub fn build(state: AppState) -> Router {
         .merge(community::routes())
         .merge(github::routes())
         .merge(chat::routes())
-        .merge(faculty::routes());
+        .merge(faculty::routes())
+        .merge(realtime::routes());
 
     Router::new()
         .route("/health", get(health))

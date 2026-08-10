@@ -1,0 +1,16 @@
+# Konfigurasi LiveKit untuk pengembangan lokal.
+# Dipakai oleh service `livekit` di docker-compose.yml.
+#
+# Catatan: mode `--dev` bawaan image hanya bind ke loopback container sehingga
+# tidak bisa dijangkau lewat port mapping. File ini bind ke semua interface.
+port: 7880
+bind_addresses:
+  - ""
+rtc:
+  tcp_port: 7881
+  udp_port: 7882
+  use_external_ip: false
+# Pasangan API key/secret. HARUS sama dengan LIVEKIT_API_KEY / LIVEKIT_API_SECRET
+# di backend (.env). Untuk produksi, ganti dengan nilai acak yang panjang.
+keys:
+  devkey: secret

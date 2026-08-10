@@ -219,6 +219,18 @@ async fn send_channel_message(
     }
 
     let message = insert_message(&state, auth, Some(&channel_id), None, &input).await?;
+
+    // Fan out to WebSocket subscribers for real-time delivery.
+    let _ = state.events.send(
+        json!({
+            "type": "channel_message",
+            "channelId": channel_id,
+            "parentId": input.parent_id,
+            "message": message.clone(),
+        })
+        .to_string(),
+    );
+
     Ok((StatusCode::CREATED, Json(message)))
 }
 
@@ -341,5 +353,15 @@ async fn send_dm_message(
         ..input
     };
     let message = insert_message(&state, auth, None, Some(dm_id), &payload).await?;
+
+    let _ = state.events.send(
+        json!({
+            "type": "dm_message",
+            "dmId": dm_id,
+            "message": message.clone(),
+        })
+        .to_string(),
+    );
+
     Ok((StatusCode::CREATED, Json(message)))
 }

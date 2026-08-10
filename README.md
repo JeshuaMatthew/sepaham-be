@@ -13,12 +13,14 @@ collab, career, faculty…) build on top of this in later passes.
 
 | Concern        | Choice                                             |
 | -------------- | -------------------------------------------------- |
-| HTTP framework | [Axum](https://github.com/tokio-rs/axum) 0.8       |
+| HTTP framework | [Axum](https://github.com/tokio-rs/axum) 0.8 (+ `ws`) |
 | Async runtime  | Tokio                                              |
 | Database       | PostgreSQL 16                                       |
 | DB access      | SQLx 0.8 (pure-Rust, async, no libpq)              |
 | Migrations     | SQLx embedded migrator (`migrations/*.up.sql`)     |
 | Auth           | JWT (`jsonwebtoken`) + Argon2 password hashing     |
+| Realtime chat  | WebSocket (`/api/ws`) + Tokio `broadcast` fan-out  |
+| Calls          | [LiveKit](https://livekit.io) SFU — backend mints access tokens |
 
 SQLx uses **runtime** queries (not the compile-time `query!` macros), so the
 project builds without a live database connection.
@@ -35,7 +37,7 @@ The `diesel` CLI, `libpq`, and a local Postgres install are **not** required.
 ```bash
 cd backend
 
-# 1. Start Postgres (uses docker-compose.yml)
+# 1. Start Postgres + LiveKit (uses docker-compose.yml)
 docker compose up -d
 
 # 2. Configure environment
@@ -44,6 +46,11 @@ cp .env.example .env        # adjust if needed
 # 3. Run — migrations apply automatically on startup
 cargo run
 ```
+
+`docker compose up` starts both **Postgres** (`:5432`) and the **LiveKit** SFU
+(`:7880`, config in [`livekit.yaml`](livekit.yaml)) used for group calls. If you
+only need the API + chat, `docker compose up -d db` is enough — calls simply
+won't connect until LiveKit is up.
 
 The API listens on `http://localhost:8080` by default. Migrations in
 `migrations/` run automatically each time the app starts (already-applied ones
@@ -69,6 +76,9 @@ development). See [`.env.example`](.env.example).
 | `BIND_ADDR`             | `0.0.0.0:8080`                                       | Listen address                       |
 | `CORS_ALLOWED_ORIGINS`  | `http://localhost:5173,http://localhost:5174`       | Comma-separated allowed origins      |
 | `RUST_LOG`              | `info`                                               | Log filter (tracing EnvFilter)       |
+| `LIVEKIT_URL`           | `ws://localhost:7880`                                | LiveKit signaling URL sent to clients |
+| `LIVEKIT_API_KEY`       | `devkey`                                             | LiveKit API key (must match `livekit.yaml`) |
+| `LIVEKIT_API_SECRET`    | `secret`                                             | LiveKit API secret used to sign call tokens |
 
 ## Migrations
 
@@ -221,6 +231,39 @@ shapes the mock files did.
 Migration `0004_seed_messages` seeds a few `#general` / `#frontend` messages
 (incl. a code snippet, an attachment, and a threaded reply).
 
+### Realtime chat (WebSocket) — implemented
+
+| Method | Path                         | Auth              | Notes                                        |
+| ------ | ---------------------------- | ----------------- | -------------------------------------------- |
+| WS     | `/api/ws?token=<jwt>`        | token query param | Server → client push of new messages         |
+
+The socket is **receive-only** for the client — messages are still *sent* over
+the REST `POST` endpoints above. When any client posts a channel message or DM,
+the handler publishes a JSON event onto a process-wide Tokio `broadcast` channel,
+and every open socket forwards it. Event shapes:
+
+```jsonc
+{ "type": "channel_message", "channelId": "...", "parentId": null, "message": { /* ChatMessage */ } }
+{ "type": "dm_message",      "dmId": "...",                        "message": { /* ChatMessage */ } }
+```
+
+The frontend applies these to its React-Query cache (deduping by message id), so
+open channels/DMs update live without polling.
+
+### Calls (LiveKit) — implemented
+
+| Method | Path                | Auth   | Body / notes                                                    |
+| ------ | ------------------- | ------ | --------------------------------------------------------------- |
+| POST   | `/api/calls/token`  | bearer | `{ room }` → `{ token, url, identity, name, room }`             |
+
+Group calls (mic + video) run through a **LiveKit** SFU — the backend never
+touches media, it only signs a short-lived HS256 access token (a LiveKit
+`VideoGrant` with `roomJoin`/`canPublish`/`canSubscribe`) using
+`LIVEKIT_API_SECRET`. The client (`livekit-client`) connects straight to
+`LIVEKIT_URL` with that token. Rooms are named by the frontend: `call-<channelId>`
+for a channel call, `call-dm-<dmId>` for a DM call — so everyone who starts a call
+on the same channel/DM lands in the same room.
+
 ### Planned (schema ready, endpoints in later passes)
 
 Per-user badges & GitHub dev-card · roadmap student submissions & activity ·
@@ -311,7 +354,8 @@ server-persisted):
 ```
 backend/
 ├─ Cargo.toml
-├─ docker-compose.yml        # local Postgres
+├─ docker-compose.yml        # local Postgres + LiveKit
+├─ livekit.yaml              # LiveKit dev config (used by docker-compose)
 ├─ .env.example
 ├─ migrations/               # SQLx .up.sql / .down.sql
 └─ src/
@@ -319,7 +363,7 @@ backend/
    ├─ config.rs              # env-based configuration
    ├─ db.rs                  # pool + migration runner
    ├─ error.rs               # AppError → HTTP response
-   ├─ state.rs               # shared AppState (pool + config)
+   ├─ state.rs               # shared AppState (pool + config + broadcast)
    ├─ router.rs              # route table + CORS + tracing
    ├─ catalog.rs             # public content endpoints (roles, roadmaps, …)
    ├─ profile.rs             # profile + preferences (bearer)
@@ -327,6 +371,7 @@ backend/
    ├─ community.rs           # membership + invite links
    ├─ github.rs              # dev-card: connect + stats
    ├─ chat.rs                # channel messages (threads) + DMs
+   ├─ realtime.rs            # WebSocket push (/ws) + LiveKit call token
    ├─ images.rs              # data-URL → WebP file, static serving, cleanup
    └─ auth/                  # register / login / me
       ├─ mod.rs              # /api/auth router
