@@ -1,0 +1,49 @@
+[package]
+name = "sepaham-backend"
+version = "0.1.0"
+edition = "2021"
+description = "Backend API for Sepaham — community & career platform for IT students (Axum + SQLx + Postgres)."
+
+[dependencies]
+# Web framework
+axum = { version = "0.8", features = ["macros"] }
+tokio = { version = "1", features = ["full"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors", "trace", "fs"] }
+
+# Image handling: decode any format, re-encode to WebP (pure Rust, no libwebp).
+# Default features include the png/jpeg/gif/webp codecs we need.
+image = "0.25"
+base64 = "0.22"
+
+# Database (async, pure-Rust — no libpq needed)
+sqlx = { version = "0.8", default-features = false, features = [
+    "runtime-tokio",
+    "tls-rustls",
+    "postgres",
+    "uuid",
+    "chrono",
+    "json",
+    "macros",
+    "migrate",
+] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Types
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+
+# Auth
+jsonwebtoken = "9"
+argon2 = "0.5"
+
+# Config & logging
+dotenvy = "0.15"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Errors
+thiserror = "2"

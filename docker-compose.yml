@@ -1,0 +1,21 @@
+# Local Postgres for development. Start with: docker compose up -d
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: sepaham-db
+    environment:
+      POSTGRES_USER: sepaham
+      POSTGRES_PASSWORD: sepaham
+      POSTGRES_DB: sepaham
+    ports:
+      - "5432:5432"
+    volumes:
+      - sepaham_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sepaham -d sepaham"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  sepaham_pgdata:
