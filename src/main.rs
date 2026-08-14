@@ -1,4 +1,5 @@
 mod auth;
+mod ai;
 mod catalog;
 mod chat;
 mod collab;

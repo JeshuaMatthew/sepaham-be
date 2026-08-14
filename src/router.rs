@@ -9,7 +9,7 @@ use tower_http::trace::TraceLayer;
 use crate::images::UPLOADS_DIR;
 use crate::state::AppState;
 use crate::{
-    auth, catalog, chat, collab, community, faculty, github, profile, realtime, roadmap,
+    ai, auth, catalog, chat, collab, community, faculty, github, profile, realtime, roadmap,
 };
 
 /// Build the full application router with all routes and middleware.
@@ -18,6 +18,7 @@ pub fn build(state: AppState) -> Router {
 
     let api = Router::new()
         .nest("/auth", auth::routes())
+        .nest("/ai", ai::routes())
         .merge(catalog::routes())
         .merge(profile::routes())
         .merge(roadmap::routes())

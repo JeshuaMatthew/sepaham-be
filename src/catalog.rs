@@ -19,7 +19,6 @@ pub fn routes() -> Router<AppState> {
         .route("/onboarding/questions", get(list_questions).put(save_questions))
         .route("/badges", get(list_badges))
         .route("/internships/contacts", get(list_internship_contacts))
-        .route("/ai/feed", get(get_ai_feed))
         .route("/music/lofi", get(list_lofi))
         .route("/community/servers", get(list_servers))
         .route("/community/channels", get(list_channels))
@@ -165,55 +164,6 @@ async fn list_internship_contacts(
     .fetch_all(&state.pool)
     .await?;
     Ok(Json(json!({ "contacts": contacts })))
-}
-
-// ---------------------------------------------------------------------------
-// AI feed: dev quotes + static nudge + suggested internships
-// ---------------------------------------------------------------------------
-#[derive(Serialize, sqlx::FromRow)]
-struct QuoteDto {
-    text: String,
-    author: String,
-}
-
-#[derive(Serialize, sqlx::FromRow)]
-#[serde(rename_all = "camelCase")]
-struct AiInternshipDto {
-    id: String,
-    company: String,
-    emoji: String,
-    role: String,
-    location: String,
-    #[serde(rename = "type")]
-    type_val: String,
-    match_percent: i32,
-    tags: Vec<String>,
-}
-
-async fn get_ai_feed(State(state): State<AppState>) -> AppResult<Json<serde_json::Value>> {
-    let quotes = sqlx::query_as::<_, QuoteDto>("SELECT text, author FROM dev_quotes")
-        .fetch_all(&state.pool)
-        .await?;
-
-    let internships = sqlx::query_as::<_, AiInternshipDto>(
-        "SELECT id, company, emoji, role, location, type AS type_val, match_percent, tags
-         FROM ai_internships ORDER BY match_percent DESC",
-    )
-    .fetch_all(&state.pool)
-    .await?;
-
-    let nudge = json!({
-        "title": "Keep your streak alive!",
-        "message": "You've committed 17 days in a row. No commit yet today — squeeze in a small push so your streak doesn't break.",
-        "streak": 17,
-        "cta": "Open GitHub",
-    });
-
-    Ok(Json(json!({
-        "quotes": quotes,
-        "nudge": nudge,
-        "internships": internships,
-    })))
 }
 
 // ---------------------------------------------------------------------------

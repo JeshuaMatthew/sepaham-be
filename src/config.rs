@@ -14,6 +14,8 @@ pub struct Config {
     pub livekit_url: String,
     pub livekit_api_key: String,
     pub livekit_api_secret: String,
+    /// Gemini AI API key (Google AI Studio). Backend-only — never sent to frontend.
+    pub gemini_api_key: String,
 }
 
 impl Config {
@@ -45,6 +47,9 @@ impl Config {
         let livekit_api_secret =
             env::var("LIVEKIT_API_SECRET").unwrap_or_else(|_| "secret".to_string());
 
+        let gemini_api_key = env::var("GEMINI_API_KEY")
+            .expect("GEMINI_API_KEY must be set (see .env.example)");
+
         let cors_allowed_origins = env::var("CORS_ALLOWED_ORIGINS")
             .unwrap_or_else(|_| "http://localhost:5173,http://localhost:5174".to_string())
             .split(',')
@@ -62,6 +67,7 @@ impl Config {
             livekit_url,
             livekit_api_key,
             livekit_api_secret,
+            gemini_api_key,
         }
     }
 }
