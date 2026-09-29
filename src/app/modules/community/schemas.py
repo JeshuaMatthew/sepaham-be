@@ -27,6 +27,20 @@ class JoinServerResponse(BaseModel):
     server: ServerObj
     channels: list[ChannelObj] = Field(default_factory=list)
 
+class DiscoverServerItem(BaseModel):
+    """Server yang bisa ditemukan (belum tentu anggota)."""
+    server: ServerObj
+    channels: list[ChannelObj] = Field(default_factory=list)
+    member_count: int = Field(
+        default=0, serialization_alias="memberCount", validation_alias="memberCount"
+    )
+    joined: bool = False
+
+    model_config = ConfigDict(populate_by_name=True)
+
+class DiscoverServersResponse(BaseModel):
+    servers: list[DiscoverServerItem] = Field(default_factory=list)
+
 class CreateInviteResponse(BaseModel):
     token: str
     server_id: str = Field(serialization_alias="serverId", validation_alias="serverId")
@@ -37,10 +51,22 @@ class MessageAttachment(BaseModel):
     name: str
     kind: str
     size: str
+    # URL berkas yang sudah diunggah lewat POST /api/chat/attachments.
+    # Opsional supaya pesan lama tetap valid, tapi pesan baru wajib ada URL —
+    # kalau tidak, lampiran hanya klaim nama tanpa berkas yang bisa dibuka.
+    url: Optional[str] = None
 
 class MessageCode(BaseModel):
     language: str
     content: str
+
+class ChatAttachmentResponse(BaseModel):
+    name: str
+    kind: str
+    size: str
+    url: str
+
+    model_config = ConfigDict(populate_by_name=True)
 
 class MessageResponse(BaseModel):
     id: str
@@ -71,7 +97,10 @@ class DMItem(BaseModel):
     user_name: str = Field(serialization_alias="userName", validation_alias="userName")
     avatar: str = ""
     role: str = ""
-    online: bool = True
+    # `online` dihapus. Tidak ada presence tracking di aplikasi ini, tapi field
+    # ini selalu `True` dan UI memakainya untuk menampilkan titik hijau —
+    # artinya setiap user terlihat online terus. Lebih jujur tidak ada titik
+    # daripada titik yang selalu menyala.
     messages: list[MessageResponse] = Field(default_factory=list)
 
     model_config = ConfigDict(populate_by_name=True)

@@ -30,6 +30,8 @@ class NodeItem(BaseModel):
     always_unlocked: bool = Field(default=False, serialization_alias="alwaysUnlocked", validation_alias="alwaysUnlocked")
     optional: bool = False
     article: Optional[str] = None
+    # Sudah dibersihkan dari kunci jawaban. Lihat `sanitize_submission_payload`
+    # di service.
     submission: Optional[Any] = None
     resources: Optional[Any] = None
     missions: Optional[Any] = None
@@ -73,20 +75,39 @@ class RoadmapUpsertRequest(BaseModel):
 
     model_config = ConfigDict(populate_by_name=True)
 
+class UploadedFileResponse(BaseModel):
+    """Hasil unggah berkas submission roadmap."""
+
+    file_name: str = Field(serialization_alias="fileName", validation_alias="fileName")
+    url: str
+    size: int
+
+    model_config = ConfigDict(populate_by_name=True)
+
 class SubmissionState(BaseModel):
     done: bool = False
     file_name: Optional[str] = Field(default=None, serialization_alias="fileName", validation_alias="fileName")
     text: Optional[str] = None
     score: Optional[int] = None
     quiz_answers: Optional[Any] = Field(default=None, serialization_alias="quizAnswers", validation_alias="quizAnswers")
+    # Rincian penilaian untuk node quiz, diisi server. `null` untuk tipe
+    # submission lain (teks, berkas, checkmark).
+    score_detail: Optional[Any] = Field(default=None, serialization_alias="scoreDetail", validation_alias="scoreDetail")
 
     model_config = ConfigDict(populate_by_name=True)
 
 class SubmissionUpsertRequest(BaseModel):
-    done: Optional[bool] = False
+    # `score` dan `done` dihapus dari input. Sebelumnya client mengirim skor
+    # hasil penilaiannya sendiri dan server menyimpannya apa adanya, jadi
+    # `{"score": 100, "done": true}` membuka node tanpa menjawab satu pun soal.
+    # Client sekarang hanya mengirim bukti; server yang menilai dan yang
+    # menentukan apakah node selesai.
+    #
+    # `extra="forbid"` supaya payload lama yang masih mengirim `score`/`done`
+    # ditolak dengan pesan jelas, bukan diam-diam diabaikan. Kalau diam-diam,
+    # client bisa mengira diri berhasil mengubah skor padahal tidak.
     file_name: Optional[str] = Field(default=None, alias="fileName")
     text: Optional[str] = None
-    score: Optional[int] = None
     quiz_answers: Optional[Any] = Field(default=None, alias="quizAnswers")
 
-    model_config = ConfigDict(populate_by_name=True)
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")

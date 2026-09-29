@@ -1,4 +1,5 @@
 import uuid
+from typing import List, Optional
 from fastapi import APIRouter, Depends, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -11,6 +12,8 @@ from src.app.modules.faculty.schemas import (
     BanServerResponse,
     FacultyRequestsResponse,
     CloseCollabRequestResponse,
+    RoleResponse,
+    RoleUpsertRequest,
 )
 
 router = APIRouter(prefix="/api/faculty", tags=["Faculty"])
@@ -21,6 +24,15 @@ async def get_students(
     db: AsyncSession = Depends(get_db),
 ):
     return await service.get_students(db)
+
+@router.get("/students/{student_id}/cv")
+async def get_student_cv(
+    student_id: uuid.UUID,
+    faculty: FacultyUser,
+    db: AsyncSession = Depends(get_db),
+):
+    """Unduh berkas CV asli milik mahasiswa."""
+    return await service.get_student_cv(db, student_id)
 
 @router.get("/servers", response_model=FacultyServersResponse, status_code=status.HTTP_200_OK)
 async def get_servers(
@@ -51,4 +63,42 @@ async def close_request(
     db: AsyncSession = Depends(get_db),
 ):
     return await service.close_request(db, id)
+
+
+# ===== Role Management =====
+
+@router.get("/roles", response_model=List[RoleResponse], status_code=status.HTTP_200_OK)
+async def list_roles(
+    faculty: FacultyUser,
+    db: AsyncSession = Depends(get_db),
+):
+    return await service.list_roles(db)
+
+
+@router.post("/roles", response_model=RoleResponse, status_code=status.HTTP_201_CREATED)
+async def create_role(
+    req: RoleUpsertRequest,
+    faculty: FacultyUser,
+    db: AsyncSession = Depends(get_db),
+):
+    return await service.create_role(db, req)
+
+
+@router.put("/roles/{role_id}", response_model=RoleResponse, status_code=status.HTTP_200_OK)
+async def update_role(
+    role_id: str,
+    req: RoleUpsertRequest,
+    faculty: FacultyUser,
+    db: AsyncSession = Depends(get_db),
+):
+    return await service.update_role(db, role_id, req)
+
+
+@router.delete("/roles/{role_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_role(
+    role_id: str,
+    faculty: FacultyUser,
+    db: AsyncSession = Depends(get_db),
+):
+    return await service.delete_role(db, role_id)
 

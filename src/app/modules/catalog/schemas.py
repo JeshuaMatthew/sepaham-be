@@ -16,22 +16,10 @@ class RoleItem(BaseModel):
 class RolesResponse(BaseModel):
     roles: list[RoleItem]
 
-class QuestionItem(BaseModel):
-    id: str
-    text: str
-    role_id: str = Field(serialization_alias="roleId", validation_alias="roleId")
-
-    model_config = ConfigDict(populate_by_name=True)
-
-class QuestionsResponse(BaseModel):
-    questions: list[QuestionItem]
-
-class ReplaceQuestionsRequest(BaseModel):
-    questions: list[QuestionItem]
-
-class ReplaceQuestionsResponse(BaseModel):
-    ok: bool = True
-    count: int
+# Catatan: schema pertanyaan Likert lama (`QuestionItem`/`QuestionsResponse`/
+# `ReplaceQuestions*`) dihapus bersama endpointnya. Bank soal onboarding kini
+# berada di `src.app.modules.onboarding.schemas` dengan bentuk
+# `{id, pillar_id, fact_id, question_text, question_type, options, sort_order}`.
 
 class InternshipContactItem(BaseModel):
     id: str
@@ -67,9 +55,17 @@ class AiInternshipItem(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
 class AiNudgeItem(BaseModel):
+    """
+    Nudge streak di Home. Semua field diisi server dari `github_stats` milik user
+    — jangan pernah mengembalikan angka hardcoded di sini, karena Home akan
+    menampilkan streak yang sama untuk semua akun.
+    """
     title: str = "Keep your streak alive!"
-    message: str = "You have committed 17 days in a row..."
-    streak: int = 17
+    message: str = "Hubungkan GitHub untuk mulai menghitung streak commit-mu."
+    streak: int = 0
+    # `cta` kosong = jangan render link CTA. Dipakai saat kartu hanya
+    # informatif (belum ada data GitHub), supaya tidak mengarah ke halaman
+    # yang tidak offers cara menghubungkan akun.
     cta: str = "Open GitHub"
 
 class AiFeedResponse(BaseModel):

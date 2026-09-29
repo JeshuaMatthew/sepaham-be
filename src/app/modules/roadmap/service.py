@@ -1,10 +1,11 @@
 import uuid
-from typing import Optional
-from fastapi import HTTPException, status
+from typing import Any, Optional
+from fastapi import HTTPException, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete, func
 from sqlalchemy.dialects.postgresql import insert
 
+from src.app.core.config import settings
 from src.app.modules.roadmap.entity import (
     Roadmap,
     RoadmapNode,
@@ -21,8 +22,110 @@ from src.app.modules.roadmap.schemas import (
     RoadmapUpsertRequest,
     SubmissionState,
     SubmissionUpsertRequest,
+    UploadedFileResponse,
 )
 from src.app.shared.Services.storage import process_image_url, delete_stored_file
+
+# Yang TIDAK boleh keluar dari server hanya kunci jawaban. Ambang kelulusan
+# (`passingScore`) justru harus ikut terkirim: mahasiswa perlu tahu targetnya,
+# dan UI harus menampilkan angka yang sama dengan yang ditegakkan server.
+# Kalau `passingScore` ikut dibuang, frontend jatuh ke default-nya sendiri dan
+# menampilkan ambang yang berbeda dari yang sebenarnya dipakai penilaian.
+_ANSWER_KEY_FIELDS = ("correctIndex", "correct_index")
+
+
+def sanitize_submission_payload(payload: Any) -> Any:
+    """Salinan payload submission tanpa kunci jawaban per soal."""
+    if not isinstance(payload, dict):
+        return payload
+
+    clean = {key: value for key, value in payload.items() if key not in _ANSWER_KEY_FIELDS}
+
+    questions = clean.get("questions")
+    if isinstance(questions, list):
+        clean["questions"] = [
+            {k: v for k, v in q.items() if k not in _ANSWER_KEY_FIELDS}
+            if isinstance(q, dict)
+            else q
+            for q in questions
+        ]
+
+    return clean
+
+
+class QuizGrade:
+    """Hasil penilaian quiz yang dihitung server."""
+
+    def __init__(self, score: int, passed: bool, detail: dict) -> None:
+        self.score = score
+        self.passed = passed
+        self.detail = detail
+
+
+def grade_quiz(quiz: dict, answers: Any) -> Optional[QuizGrade]:
+    """Nilai jawaban quiz terhadap `correctIndex` di server.
+
+    `answers` diterima dalam dua bentuk karena frontend mengirim
+    `{ questionId: selectedIndex }` maupun daftar
+    `[{ questionId, selected }]`:
+    - dict  -> dipakai langsung
+    - list  -> diratakan memakai `questionId` dan `selected`
+
+    Mengembalikan `None` kalau `quiz` bukan bentuk quiz atau tidak punya
+    kunci jawaban, supaya pemanggil tidak menebak.
+    """
+    questions = quiz.get("questions")
+    if not isinstance(questions, list) or not questions:
+        return None
+
+    if not any(
+        isinstance(q, dict) and "correctIndex" in q
+        for q in questions
+    ):
+        return None
+
+    if isinstance(answers, dict):
+        selected_by_id = {str(k): v for k, v in answers.items()}
+    elif isinstance(answers, list):
+        selected_by_id = {}
+        for item in answers:
+            if isinstance(item, dict):
+                qid = item.get("questionId", item.get("question_id"))
+                if qid is not None:
+                    selected_by_id[str(qid)] = item.get(
+                        "selected", item.get("selectedIndex")
+                    )
+    else:
+        selected_by_id = {}
+
+    total = len(questions)
+    correct = 0
+    per_question = []
+    for question in questions:
+        if not isinstance(question, dict):
+            continue
+        qid = str(question.get("id", ""))
+        correct_index = question.get("correctIndex")
+        selected = selected_by_id.get(qid)
+        is_correct = selected is not None and selected == correct_index
+        if is_correct:
+            correct += 1
+        per_question.append({"questionId": qid, "correct": is_correct})
+
+    score = round((correct / total) * 100) if total else 0
+    passing = int(quiz.get("passingScore") or 0)
+
+    return QuizGrade(
+        score=score,
+        passed=score >= passing,
+        detail={
+            "correct": correct,
+            "total": total,
+            "passingScore": passing,
+            "questions": per_question,
+        },
+    )
+
 
 async def get_roadmaps(db: AsyncSession) -> RoadmapsListResponse:
     stmt = (
@@ -64,7 +167,9 @@ async def get_roadmaps(db: AsyncSession) -> RoadmapsListResponse:
         )
     return RoadmapsListResponse(roadmaps=items)
 
-async def get_roadmap_detail(db: AsyncSession, roadmap_id: str) -> RoadmapDetailResponse:
+async def get_roadmap_detail(
+    db: AsyncSession, roadmap_id: str, include_answer_key: bool = False
+) -> RoadmapDetailResponse:
     res = await db.execute(select(Roadmap).where(Roadmap.id == roadmap_id))
     rm = res.scalar_one_or_none()
     if not rm:
@@ -102,7 +207,13 @@ async def get_roadmap_detail(db: AsyncSession, roadmap_id: str) -> RoadmapDetail
                 alwaysUnlocked=n.always_unlocked,
                 optional=n.optional,
                 article=n.article,
-                submission=n.submission,
+                # Kunci jawaban dibuang sebelum dikirim ke mahasiswa. Hanya
+                # endpoint faculty yang boleh meminta payload apa adanya.
+                submission=(
+                    n.submission
+                    if include_answer_key
+                    else sanitize_submission_payload(n.submission)
+                ),
                 resources=n.resources,
                 missions=n.missions,
             )
@@ -230,6 +341,48 @@ async def upsert_roadmap(
 
     return {"id": roadmap_id, "ok": True}
 
+async def create_roadmap(
+    db: AsyncSession, req: RoadmapUpsertRequest, user_id: uuid.UUID
+) -> dict:
+    """Buat roadmap baru dengan id dari server.
+
+    Sebelumnya frontend membuat id `custom-xxxxxxxx` di browser lalu `PUT` ke
+    id yang belum ada di server (error ditelan), sehingga roadmap hanya hidup
+    di localStorage satu browser. Sekarang id dibuat di sini dari judul plus
+    akhiran acak supaya unik, dan roadmap langsung tersimpan di database.
+    """
+    import re as _re
+
+    slug = _re.sub(r"[^a-z0-9]+", "-", (req.title or "roadmap").lower()).strip("-") or "roadmap"
+    roadmap_id = f"{slug}-{uuid.uuid4().hex[:6]}"
+
+    existing = await db.execute(select(Roadmap).where(Roadmap.id == roadmap_id))
+    while existing.scalar_one_or_none() is not None:
+        roadmap_id = f"{slug}-{uuid.uuid4().hex[:6]}"
+        existing = await db.execute(select(Roadmap).where(Roadmap.id == roadmap_id))
+
+    return await upsert_roadmap(db, roadmap_id, req, user_id)
+
+async def delete_roadmap(db: AsyncSession, roadmap_id: str) -> dict:
+    """Hapus roadmap beserta node/edge/submission-nya.
+
+    Relasi `nodes`/`edges` memakai cascade delete-orphan, dan `submissions` /
+    `roadmap_activity` memakai FK `ON DELETE CASCADE`, jadi cukup hapus baris
+    roadmap-nya. Sebelumnya tidak ada endpoint ini sama sekali: tombol hapus di
+    UI hanya membuang item dari array lokal, dan roadmap muncul lagi di
+    browser lain.
+    """
+    res = await db.execute(select(Roadmap).where(Roadmap.id == roadmap_id))
+    rm = res.scalar_one_or_none()
+    if rm is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Roadmap tidak ditemukan",
+        )
+    await db.delete(rm)
+    await db.commit()
+    return {"id": roadmap_id, "ok": True}
+
 async def get_submissions(
     db: AsyncSession, user_id: uuid.UUID, roadmap_id: str
 ) -> dict[str, SubmissionState]:
@@ -255,22 +408,75 @@ async def upsert_submission(
     node_key: str,
     req: SubmissionUpsertRequest,
 ) -> SubmissionState:
+    """Simpan submission dan, untuk node quiz, nilai di server.
+
+    `done` dan `score` tidak lagi datang dari client. Yang client kirim hanya
+    bukti: jawaban quiz, teks, atau nama berkas. Server yang memutuskan
+    apakah node selesai.
+    """
+    node_res = await db.execute(
+        select(RoadmapNode).where(
+            RoadmapNode.roadmap_id == roadmap_id,
+            RoadmapNode.node_key == node_key,
+        )
+    )
+    node = node_res.scalar_one_or_none()
+    if node is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Node roadmap tidak ditemukan",
+        )
+
+    payload = node.submission if isinstance(node.submission, dict) else {}
+    submission_type = payload.get("type")
+
+    score: Optional[int] = None
+    score_detail: Optional[dict] = None
+    done = False
+
+    if submission_type == "quiz":
+        grade = grade_quiz(payload, req.quiz_answers)
+        if grade is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Node ini bukan quiz yang bisa dinilai, atau kunci jawabannya belum diatur.",
+            )
+        score = grade.score
+        score_detail = grade.detail
+        done = grade.passed
+    elif submission_type == "text":
+        done = bool((req.text or "").strip())
+    elif submission_type == "file":
+        # `file_name` hanya diisi kalau benar-benar ada berkas yang diunggah
+        # lewat endpoint upload. Node tidak bisa diselesaikan dengan mengetik
+        # nama berkas.
+        done = bool(req.file_name)
+    elif submission_type == "checkmark":
+        # Deklarasi diri, bukan verifikasi. Disimpan supaya progres tidak
+        # hilang, dan ditandai supaya UI bisa jujur soal statusnya.
+        done = True
+        score_detail = {"selfDeclared": True}
+    else:
+        # Tipe submission tidak dikenal: jangan tandai selesai, tapi jangan
+        # juga tolak — biarkan data tersimpan untuk diperiksa.
+        done = False
+
     stmt = insert(Submission).values(
         user_id=user_id,
         roadmap_id=roadmap_id,
         node_key=node_key,
-        done=req.done if req.done is not None else False,
+        done=done,
         file_name=req.file_name,
         text_answer=req.text,
-        score=req.score,
+        score=score,
         quiz_answers=req.quiz_answers,
     ).on_conflict_do_update(
         constraint="uq_user_roadmap_submission",
         set_={
-            "done": req.done if req.done is not None else False,
+            "done": done,
             "file_name": req.file_name,
             "text_answer": req.text,
-            "score": req.score,
+            "score": score,
             "quiz_answers": req.quiz_answers,
         },
     ).returning(
@@ -284,13 +490,75 @@ async def upsert_submission(
     res = await db.execute(stmt)
     await db.commit()
     row = res.one()
+
+    # Badge dihitung dari aksi nyata (di sini: submission selesai). Kegagalan
+    # pemberian badge tidak boleh menggagalkan submission.
+    try:
+        from src.app.modules.badges.service import award_badges_for_user
+
+        await award_badges_for_user(db, user_id)
+    except Exception:
+        pass
+
     return SubmissionState(
         done=bool(row.done),
         fileName=row.file_name,
         text=row.text_answer,
         score=row.score,
         quizAnswers=row.quiz_answers,
+        scoreDetail=score_detail,
     )
+
+async def upload_submission_file(
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    roadmap_id: str,
+    node_key: str,
+    file: UploadFile,
+) -> UploadedFileResponse:
+    """Unggah bukti berkas dan tandai node selesai.
+
+    Berkas benar-benar ditulis ke `uploads/`, jadi nama yang sampai ke tabel
+    `submissions.file_name` menunjuk berkas yang ada. Sebelumnya UI hanya
+    mengirim `File.name` tanpa unggah apa pun.
+    """
+    node_res = await db.execute(
+        select(RoadmapNode).where(
+            RoadmapNode.roadmap_id == roadmap_id,
+            RoadmapNode.node_key == node_key,
+        )
+    )
+    node = node_res.scalar_one_or_none()
+    if node is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Node roadmap tidak ditemukan",
+        )
+
+    payload = node.submission if isinstance(node.submission, dict) else {}
+    if payload.get("type") != "file":
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Node ini tidak meminta berkas sebagai bukti.",
+        )
+
+    content = await file.read()
+    if not content:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Berkas kosong.",
+        )
+
+    file_name = await save_uploaded_file(file)
+    await db.commit()
+
+    base = settings.PUBLIC_BASE_URL.rstrip("/")
+    return UploadedFileResponse(
+        fileName=file_name,
+        url=f"{base}/uploads/{file_name}",
+        size=len(content),
+    )
+
 
 async def record_activity(db: AsyncSession, user_id: uuid.UUID, roadmap_id: str) -> dict:
     stmt = insert(RoadmapActivity).values(

@@ -1,12 +1,18 @@
 from typing import Optional
 from pydantic import BaseModel, EmailStr, Field, ConfigDict, field_validator
-from src.app.core.enums import UserRole
+
+# Panjang minimum password. 6 karakter terlalu pendek untuk dipakai di mana
+# pun. Ini bukan pengukuran keamanan, tapi tidak ada alasan membiarkannya.
+MIN_PASSWORD_LENGTH = 8
 
 class RegisterRequest(BaseModel):
     email: str
     password: str
     name: str
-    role: Optional[UserRole] = UserRole.STUDENT
+    # `role` sengaja tidak ada di sini. Sebelumnya klien boleh mengirim
+    # `role: "faculty"` dan endpoint registrasi membuat akun dosen untuk siapa
+    # saja yang mengirimnya. Akun faculty hanya dibuat lewat provisioning,
+    # bukan lewat API publik.
 
     @field_validator("email")
     @classmethod
@@ -19,8 +25,8 @@ class RegisterRequest(BaseModel):
     @field_validator("password")
     @classmethod
     def validate_password(cls, v: str) -> str:
-        if len(v) < 6:
-            raise ValueError("Password minimal 6 karakter")
+        if len(v) < MIN_PASSWORD_LENGTH:
+            raise ValueError(f"Password minimal {MIN_PASSWORD_LENGTH} karakter")
         return v
 
     @field_validator("name")
@@ -52,3 +58,20 @@ class UserDetail(BaseModel):
 class AuthResponse(BaseModel):
     token: str
     user: UserDetail
+
+class GoogleAuthRequest(BaseModel):
+    """Kredensial hasil login Google.
+
+    Hanya dua field, keduanya kredensial asli dari Google:
+    - `credential`  : ID token (JWT) dari Google Identity Services
+    - `access_token`: OAuth access token dari popup Google
+
+    `email` dan `name` TIDAK diterima. Sebelumnya keduanya ada di sini dan
+    dipakai kalau verifikasi gagal, sehingga `POST /api/auth/google` dengan
+    body `{"email": "kositasi@..."}` saja berhasil memberi token untuk akun
+    mana saja. Sekarang kalau tidak ada kredensial yang bisa diverifikasi,
+    jawabannya 401.
+    """
+
+    credential: Optional[str] = None
+    access_token: Optional[str] = None

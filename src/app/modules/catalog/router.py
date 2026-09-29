@@ -7,9 +7,6 @@ from src.app.shared.dependencies import CurrentUser, FacultyUser
 from src.app.modules.catalog import service
 from src.app.modules.catalog.schemas import (
     RolesResponse,
-    QuestionsResponse,
-    ReplaceQuestionsRequest,
-    ReplaceQuestionsResponse,
     InternshipsResponse,
     AiFeedResponse,
     LofiTracksResponse,
@@ -23,17 +20,12 @@ router = APIRouter(prefix="/api", tags=["Catalog"])
 async def get_roles(db: AsyncSession = Depends(get_db)):
     return await service.get_roles(db)
 
-@router.get("/onboarding/questions", response_model=QuestionsResponse, status_code=status.HTTP_200_OK)
-async def get_questions(db: AsyncSession = Depends(get_db)):
-    return await service.get_questions(db)
-
-@router.put("/onboarding/questions", response_model=ReplaceQuestionsResponse, status_code=status.HTTP_200_OK)
-async def replace_questions(
-    req: ReplaceQuestionsRequest,
-    faculty: FacultyUser,
-    db: AsyncSession = Depends(get_db),
-):
-    return await service.replace_questions(db, req)
+# Catatan: endpoint `/api/onboarding/questions` versi Likert lama sudah dihapus.
+# Endpoint itu men-shadow router onboarding (path-nya identik) dan mengembalikan
+# bentuk `{id, text, roleId}` yang tidak punya fact_id, sehingga mahasiswa tidak
+# pernah melihat hasil suntingan dosen di sana. Bank soal yang benar dikelola
+# lewat modul onboarding: `/questions?pillar=` untuk mahasiswa, serta
+# `/questions/bank` + `PUT /questions` (khusus faculty) untuk editor soal.
 
 @router.get("/badges", status_code=status.HTTP_200_OK)
 async def get_badges_catalog(db: AsyncSession = Depends(get_db)):
@@ -44,8 +36,8 @@ async def get_internships(db: AsyncSession = Depends(get_db)):
     return await service.get_internships(db)
 
 @router.get("/ai/feed", response_model=AiFeedResponse, status_code=status.HTTP_200_OK)
-async def get_ai_feed(db: AsyncSession = Depends(get_db)):
-    return await service.get_ai_feed(db)
+async def get_ai_feed(user: CurrentUser, db: AsyncSession = Depends(get_db)):
+    return await service.get_ai_feed(db, user.id)
 
 @router.get("/music/lofi", response_model=LofiTracksResponse, status_code=status.HTTP_200_OK)
 async def get_lofi(db: AsyncSession = Depends(get_db)):

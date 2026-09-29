@@ -1,10 +1,12 @@
 import uuid
 from datetime import datetime, timezone
-from fastapi import HTTPException, status
-from sqlalchemy import select, or_
+from fastapi import HTTPException, UploadFile, status
+from sqlalchemy import func, select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.broadcaster import broadcaster
+from src.app.core.config import settings
+from src.app.shared.Services.storage import save_uploaded_file
 from src.app.modules.auth.entity import User
 from src.app.modules.profile.entity import Profile
 from src.app.modules.community.entity import (
@@ -18,8 +20,11 @@ from src.app.modules.community.entity import (
 from src.app.modules.community.schemas import (
     ServerObj,
     ChannelObj,
+    ChatAttachmentResponse,
     CommunityMineItem,
     CommunityMineResponse,
+    DiscoverServerItem,
+    DiscoverServersResponse,
     JoinServerResponse,
     CreateInviteResponse,
     MessageResponse,
@@ -29,6 +34,87 @@ from src.app.modules.community.schemas import (
     DMItem,
     DMsResponse,
 )
+
+DM_ROOM_PREFIX = "dm:"
+
+MAX_CHAT_ATTACHMENT_BYTES = 10 * 1024 * 1024
+CHAT_IMAGE_EXTENSIONS = frozenset({".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg"})
+
+
+async def upload_chat_attachment(file: UploadFile) -> ChatAttachmentResponse:
+    """Simpan lampiran chat dan kembalikan metadata + URL yang bisa dibuka.
+
+    Sebelumnya frontend memakai konstanta `screenshot.png` 128 KB yang dikirim
+    sebagai attachment ke server lalu tampil sebagai lampiran asli di sisi
+    penerima — tanpa pernah ada berkas yang diunggah.
+    """
+    from pathlib import Path as _Path
+
+    content = await file.read()
+    if not content:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Berkas kosong.",
+        )
+    if len(content) > MAX_CHAT_ATTACHMENT_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="Berkas maksimal 10 MB.",
+        )
+
+    original_name = (file.filename or "file").strip() or "file"
+    ext = _Path(original_name).suffix.lower()
+    kind = "image" if ext in CHAT_IMAGE_EXTENSIONS else "file"
+
+    await file.seek(0)
+    saved_name = await save_uploaded_file(file)
+
+    size_kb = max(1, len(content) // 1024)
+    size = f"{size_kb} KB" if size_kb < 1024 else f"{size_kb / 1024:.1f} MB"
+    url = f"{settings.PUBLIC_BASE_URL.rstrip('/')}/uploads/{saved_name}"
+
+    return ChatAttachmentResponse(name=original_name, kind=kind, size=size, url=url)
+
+
+def dm_room(dm_id: str) -> str:
+    """Nama room websocket untuk sebuah DM.
+
+    Channel dan DM memakai id yang sama-sama string, jadi diberi awalan berbeda
+    supaya satu tidak bisa mengunci langganan yang lain.
+    """
+    return f"{DM_ROOM_PREFIX}{dm_id}"
+
+
+async def _require_channel(db: AsyncSession, channel_id: str) -> Channel:
+    """Ambil channel atau 404."""
+    res = await db.execute(select(Channel).where(Channel.id == channel_id))
+    channel = res.scalar_one_or_none()
+    if channel is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Channel tidak ditemukan")
+    return channel
+
+
+async def _require_channel_membership(db: AsyncSession, user_id: uuid.UUID, server_id: str) -> None:
+    """Pengguna harus anggota server induk channel.
+
+    Sebelumnya `get_channel_messages` dipanggil tanpa `CurrentUser` sama sekali
+    dan `post_channel_message` hanya memastikan channel-nya ada. Akibatnya siapa
+    pun yang tahu id channel (yang di-seed singkat, misalnya "general" atau
+    "tanya-anonim") bisa membaca dan menulis pesan, termasuk channel anonim yang
+    tujuannya justru menyembunyikan identitas.
+    """
+    res = await db.execute(
+        select(ServerMember).where(
+            ServerMember.server_id == server_id,
+            ServerMember.user_id == user_id,
+        )
+    )
+    if res.scalar_one_or_none() is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Anda bukan anggota dari server ini",
+        )
+
 
 def _format_message_response(msg: Message) -> MessageResponse:
     author_id = "anon" if msg.anonymous or not msg.author_id else str(msg.author_id)
@@ -45,6 +131,7 @@ def _format_message_response(msg: Message) -> MessageResponse:
             name=msg.attachment_name,
             kind=msg.attachment_kind or "",
             size=msg.attachment_size or "",
+            url=msg.attachment_url or None,
         )
 
     ts = msg.created_at.strftime("%H:%M") if msg.created_at else ""
@@ -109,6 +196,66 @@ async def get_my_communities(db: AsyncSession, user_id: uuid.UUID) -> CommunityM
         for s in servers
     ]
     return CommunityMineResponse(communities=communities)
+
+async def discover_servers(db: AsyncSession, user_id: uuid.UUID) -> DiscoverServersResponse:
+    """
+    Daftar SEMUA server yang tidak di-ban, lengkap dengan channel, jumlah anggota,
+    dan apakah user saat ini sudah jadi anggota.
+
+    Tanpa endpoint ini user baru yang belum punya satu pun server tidak punya
+    jalan masuk ke fitur chat: endpoint `join` hanya dipanggil dari invite link.
+    """
+    s_stmt = select(Server).where(Server.banned.is_(False)).order_by(Server.name)
+    s_result = await db.execute(s_stmt)
+    servers = s_result.scalars().all()
+
+    if not servers:
+        return DiscoverServersResponse(servers=[])
+
+    server_ids = [s.id for s in servers]
+
+    ch_stmt = (
+        select(Channel)
+        .where(Channel.server_id.in_(server_ids))
+        .order_by(Channel.server_id, Channel.sort_order)
+    )
+    ch_result = await db.execute(ch_stmt)
+    ch_by_server: dict[str, list[ChannelObj]] = {i: [] for i in server_ids}
+    for ch in ch_result.scalars().all():
+        ch_by_server.setdefault(ch.server_id, []).append(
+            ChannelObj(
+                id=ch.id,
+                server_id=ch.server_id,
+                name=ch.name,
+                topic=ch.topic,
+                kind=ch.kind.value if hasattr(ch.kind, "value") else str(ch.kind),
+            )
+        )
+
+    cnt_stmt = (
+        select(ServerMember.server_id, func.count(ServerMember.user_id))
+        .where(ServerMember.server_id.in_(server_ids))
+        .group_by(ServerMember.server_id)
+    )
+    counts: dict[str, int] = {sid: 0 for sid in server_ids}
+    for sid, n in (await db.execute(cnt_stmt)).all():
+        counts[sid] = n
+
+    mine_stmt = select(ServerMember.server_id).where(ServerMember.user_id == user_id)
+    mine = set((await db.execute(mine_stmt)).scalars().all())
+
+    return DiscoverServersResponse(
+        servers=[
+            DiscoverServerItem(
+                server=ServerObj(id=s.id, name=s.name, initial=s.initial, color=s.color),
+                channels=ch_by_server.get(s.id, []),
+                member_count=counts.get(s.id, 0),
+                joined=s.id in mine,
+            )
+            for s in servers
+        ]
+    )
+
 
 async def join_server(db: AsyncSession, user_id: uuid.UUID, server_id: str) -> JoinServerResponse:
     s_stmt = select(Server).where(Server.id == server_id)
@@ -191,11 +338,11 @@ async def accept_invite(db: AsyncSession, user_id: uuid.UUID, token: uuid.UUID) 
 
     return await join_server(db, user_id, invite.server_id)
 
-async def get_channel_messages(db: AsyncSession, channel_id: str) -> list[MessageResponse]:
-    c_stmt = select(Channel).where(Channel.id == channel_id)
-    c_res = await db.execute(c_stmt)
-    if not c_res.scalar_one_or_none():
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Channel tidak ditemukan")
+async def get_channel_messages(
+    db: AsyncSession, user_id: uuid.UUID, channel_id: str
+) -> list[MessageResponse]:
+    channel = await _require_channel(db, channel_id)
+    await _require_channel_membership(db, user_id, channel.server_id)
 
     stmt = select(Message).where(Message.channel_id == channel_id).order_by(Message.created_at)
     result = await db.execute(stmt)
@@ -224,10 +371,8 @@ async def post_channel_message(
     channel_id: str,
     req: PostMessageRequest,
 ) -> MessageResponse:
-    c_stmt = select(Channel).where(Channel.id == channel_id)
-    c_res = await db.execute(c_stmt)
-    if not c_res.scalar_one_or_none():
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Channel tidak ditemukan")
+    channel = await _require_channel(db, channel_id)
+    await _require_channel_membership(db, user_id, channel.server_id)
 
     u_stmt = select(User, Profile).outerjoin(Profile, Profile.user_id == User.id).where(User.id == user_id)
     u_res = await db.execute(u_stmt)
@@ -266,6 +411,7 @@ async def post_channel_message(
         attachment_name=req.attachment.name if req.attachment else None,
         attachment_kind=req.attachment.kind if req.attachment else None,
         attachment_size=req.attachment.size if req.attachment else None,
+        attachment_url=req.attachment.url if req.attachment else None,
         anonymous=req.anonymous,
     )
     db.add(msg)
@@ -274,12 +420,24 @@ async def post_channel_message(
 
     resp = _format_message_response(msg)
 
-    await broadcaster.broadcast({
-        "type": "channel_message",
-        "channelId": channel_id,
-        "parentId": str(req.parent_id) if req.parent_id else None,
-        "message": resp.model_dump(by_alias=True),
-    })
+    try:
+        from src.app.modules.badges.service import award_badges_for_user
+
+        await award_badges_for_user(db, user_id)
+    except Exception:
+        pass
+
+    # Hanya anggota channel itu yang menerima. `broadcast` lama mengirim ke
+    # semua socket yang terhubung, termasuk DM pribadi orang lain.
+    await broadcaster.broadcast(
+        {
+            "type": "channel_message",
+            "channelId": channel_id,
+            "parentId": str(req.parent_id) if req.parent_id else None,
+            "message": resp.model_dump(by_alias=True),
+        },
+        room=channel_id,
+    )
 
     return resp
 
@@ -328,7 +486,6 @@ async def get_dms(db: AsyncSession, user_id: uuid.UUID) -> DMsResponse:
                 user_name=user_name,
                 avatar=avatar,
                 role=role,
-                online=True,
                 messages=msg_responses,
             )
         )
@@ -381,7 +538,6 @@ async def create_or_get_dm(db: AsyncSession, user_id: uuid.UUID, target_user_id:
         user_name=user_name,
         avatar=avatar,
         role=role,
-        online=True,
         messages=msg_responses,
     )
 
@@ -429,6 +585,7 @@ async def post_dm_message(
         attachment_name=req.attachment.name if req.attachment else None,
         attachment_kind=req.attachment.kind if req.attachment else None,
         attachment_size=req.attachment.size if req.attachment else None,
+        attachment_url=req.attachment.url if req.attachment else None,
         anonymous=False,
     )
     db.add(msg)
@@ -437,10 +594,21 @@ async def post_dm_message(
 
     resp = _format_message_response(msg)
 
-    await broadcaster.broadcast({
-        "type": "dm_message",
-        "dmId": str(dm_id),
-        "message": resp.model_dump(by_alias=True),
-    })
+    try:
+        from src.app.modules.badges.service import award_badges_for_user
+
+        await award_badges_for_user(db, user_id)
+    except Exception:
+        pass
+
+    # Hanya dua partisipan percakapan ini yang boleh melihat pesan DM-nya.
+    await broadcaster.broadcast(
+        {
+            "type": "dm_message",
+            "dmId": str(dm_id),
+            "message": resp.model_dump(by_alias=True),
+        },
+        room=dm_room(str(dm_id)),
+    )
 
     return resp

@@ -89,3 +89,34 @@ async def get_current_faculty(
 
 CurrentUser = Annotated[AuthUser, Depends(get_current_user)]
 FacultyUser = Annotated[AuthUser, Depends(get_current_faculty)]
+
+async def get_optional_current_user(
+    authorization: Annotated[Optional[str], Header()] = None,
+    db: AsyncSession = Depends(get_db),
+) -> Optional[AuthUser]:
+    if not authorization:
+        return None
+    try:
+        parts = authorization.strip().split()
+        if len(parts) != 2 or parts[0].lower() != "bearer":
+            return None
+        payload = decode_access_token(parts[1])
+        user_id_str = payload.get("sub")
+        if not user_id_str:
+            return None
+        user_uuid = uuid.UUID(user_id_str)
+        result = await db.execute(select(User).where(User.id == user_uuid))
+        user = result.scalar_one_or_none()
+        if not user:
+            return None
+        return AuthUser(
+            user_id=user.id,
+            email=user.email,
+            role=user.role.value if hasattr(user.role, "value") else str(user.role),
+            name=user.name,
+        )
+    except Exception:
+        return None
+
+
+OptionalCurrentUser = Annotated[Optional[AuthUser], Depends(get_optional_current_user)]

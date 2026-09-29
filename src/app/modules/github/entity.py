@@ -9,12 +9,17 @@ class GithubStats(Base):
 
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
     username = Column(Text, nullable=False)
-    total_commits = Column(Integer, nullable=False, default=0, server_default=sa_text("0"))
-    current_streak = Column(Integer, nullable=False, default=0, server_default=sa_text("0"))
-    longest_streak = Column(Integer, nullable=False, default=0, server_default=sa_text("0"))
+    # Kolom berikut nullable: API publik GitHub tidak menyediakan jumlah commit,
+    # streak harian, maupun grafik kontribusi tanpa token OAuth. `NULL` berarti
+    # "tidak diketahui". Kolom ini pernah NOT NULL dengan default 0, yang
+    # membuat frontend menampilkan "0 commit" untuk data yang sebenarnya tidak
+    # pernah diambil.
+    total_commits = Column(Integer, nullable=True, default=None)
+    current_streak = Column(Integer, nullable=True, default=None)
+    longest_streak = Column(Integer, nullable=True, default=None)
     public_repos = Column(Integer, nullable=False, default=0, server_default=sa_text("0"))
     top_languages = Column(JSONB, nullable=False, default=list, server_default=sa_text("'[]'::jsonb"))
-    weeks = Column(JSONB, nullable=False, default=list, server_default=sa_text("'[]'::jsonb"))
+    weeks = Column(JSONB, nullable=True, default=None)
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=sa_text("now()"), onupdate=sa_text("now()"))
 
     user = relationship("User")

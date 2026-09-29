@@ -102,6 +102,7 @@ class Message(Base):
     attachment_name = Column(Text, nullable=True)
     attachment_kind = Column(Text, nullable=True)
     attachment_size = Column(Text, nullable=True)
+    attachment_url = Column(Text, nullable=True)
     anonymous = Column(Boolean, nullable=False, default=False, server_default=sa_text("false"))
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=sa_text("now()"))
 

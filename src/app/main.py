@@ -23,6 +23,8 @@ from src.app.modules.community.router import (
 )
 from src.app.modules.faculty.router import router as faculty_router
 from src.app.modules.realtime.router import router as realtime_router
+from src.app.modules.onboarding.router import router as onboarding_router
+from src.app.modules.ai.router import router as ai_router
 
 # Ensure uploads directory exists
 UPLOAD_DIR = Path("uploads")
@@ -90,6 +92,9 @@ app.include_router(community_router)
 app.include_router(chat_router)
 app.include_router(faculty_router)
 app.include_router(realtime_router)
+app.include_router(onboarding_router, prefix="/api/onboarding")
+app.include_router(onboarding_router, prefix="/api/v1/onboarding")
+app.include_router(ai_router)
 
 @app.get("/health", status_code=status.HTTP_200_OK)
 @app.get("/api/health", status_code=status.HTTP_200_OK)

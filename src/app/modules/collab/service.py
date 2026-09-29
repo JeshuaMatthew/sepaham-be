@@ -40,6 +40,7 @@ def _to_request_item(c: CollabRequest, server_name: str = None, interested_count
         communityId=c.community_id,
         communityName=server_name or (c.server.name if c.server else None),
         author=AuthorObj(
+            id=str(c.author_id) if c.author_id else None,
             name=c.author_name,
             avatar=c.author_avatar or "",
             role=c.author_role or "",
@@ -143,6 +144,13 @@ async def create_request(
 
     await db.commit()
     await db.refresh(collab)
+
+    try:
+        from src.app.modules.badges.service import award_badges_for_user
+
+        await award_badges_for_user(db, user_id)
+    except Exception:
+        pass
 
     # Re-fetch with images
     stmt = select(CollabRequest).options(selectinload(CollabRequest.images)).where(CollabRequest.id == collab.id)

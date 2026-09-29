@@ -1,6 +1,8 @@
 import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 from fastapi import HTTPException, status
+from fastapi.responses import FileResponse
 from sqlalchemy import text as sa_text, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,6 +19,8 @@ from src.app.modules.faculty.schemas import (
     BanServerResponse,
     FacultyRequestsResponse,
     CloseCollabRequestResponse,
+    RoleResponse,
+    RoleUpsertRequest,
 )
 
 async def get_students(db: AsyncSession) -> FacultyStudentsResponse:
@@ -33,7 +37,7 @@ async def get_students(db: AsyncSession) -> FacultyStudentsResponse:
             COALESCE((SELECT count(*) FROM submissions s
                       WHERE s.user_id = u.id AND s.roadmap_id = rm.id AND s.done), 0) AS roadmap_completed,
             COALESCE(gs.public_repos, 0) AS gh_repos,
-            COALESCE(gs.total_commits, 0) AS gh_commits,
+            gs.total_commits AS gh_commits,
             COALESCE(
                 (SELECT array_agg(elem->>'name') FROM jsonb_array_elements(gs.top_languages) elem),
                 ARRAY[]::text[]
@@ -138,4 +142,148 @@ async def close_request(db: AsyncSession, request_id: uuid.UUID) -> CloseCollabR
     await db.commit()
 
     return CloseCollabRequestResponse(id=str(req.id), closed=req.closed)
+
+
+# ===== Role Management =====
+
+async def list_roles(db: AsyncSession) -> list[RoleResponse]:
+    from src.app.modules.catalog.entity import Role
+
+    stmt = select(Role).order_by(Role.sort_order)
+    result = await db.execute(stmt)
+    roles = result.scalars().all()
+
+    return [
+        RoleResponse(
+            id=r.id,
+            title=r.title,
+            emoji=r.emoji or "",
+            tagline=r.tagline or "",
+            description=r.description or "",
+            accent=r.accent or "",
+        )
+        for r in roles
+    ]
+
+
+async def create_role(db: AsyncSession, req: RoleUpsertRequest) -> RoleResponse:
+    from src.app.modules.catalog.entity import Role
+
+    role = Role(
+        id=req.title.lower().replace(" ", "-").replace("/", "-"),
+        title=req.title,
+        emoji=req.emoji or "",
+        tagline=req.tagline or "",
+        description=req.description or "",
+        accent=req.accent or "",
+    )
+    db.add(role)
+    await db.commit()
+    await db.refresh(role)
+
+    return RoleResponse(
+        id=role.id,
+        title=role.title,
+        emoji=role.emoji or "",
+        tagline=role.tagline or "",
+        description=role.description or "",
+        accent=role.accent or "",
+    )
+
+
+async def update_role(db: AsyncSession, role_id: str, req: RoleUpsertRequest) -> RoleResponse:
+    from src.app.modules.catalog.entity import Role
+
+    stmt = select(Role).where(Role.id == role_id)
+    result = await db.execute(stmt)
+    role = result.scalar_one_or_none()
+
+    if not role:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Role tidak ditemukan",
+        )
+
+    role.title = req.title
+    role.emoji = req.emoji or ""
+    role.tagline = req.tagline or ""
+    role.description = req.description or ""
+    role.accent = req.accent or ""
+    await db.commit()
+    await db.refresh(role)
+
+    return RoleResponse(
+        id=role.id,
+        title=role.title,
+        emoji=role.emoji or "",
+        tagline=role.tagline or "",
+        description=role.description or "",
+        accent=role.accent or "",
+    )
+
+
+async def delete_role(db: AsyncSession, role_id: str) -> None:
+    from src.app.modules.catalog.entity import Role
+
+    stmt = select(Role).where(Role.id == role_id)
+    result = await db.execute(stmt)
+    role = result.scalar_one_or_none()
+
+    if not role:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Role tidak ditemukan",
+        )
+
+    await db.delete(role)
+    await db.commit()
+
+
+# ===== Student CV =====
+
+CV_UPLOAD_DIR = Path("uploads")
+CV_ALLOWED_EXTENSIONS = frozenset({".pdf", ".doc", ".docx"})
+CV_MIME_BY_EXT = {".pdf": "application/pdf", ".doc": "application/msword", ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document"}
+
+
+async def get_student_cv(db: AsyncSession, student_id: uuid.UUID) -> FileResponse:
+    """Kembalikan berkas CV mahasiswa untuk diunduh dosen.
+
+    Sebelumnya modal "View CV" di frontend hanya menampilkan placeholder
+    "isn't available in this demo" — tombolnya ada tapi tidak melakukan
+    apa-apa. Sekarang berkas asli yang diunggah mahasiswa dikembalikan.
+    """
+    from src.app.modules.profile.entity import Profile
+
+    res = await db.execute(select(Profile).where(Profile.user_id == student_id))
+    profile = res.scalar_one_or_none()
+    if profile is None or not profile.cv_file_name:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Mahasiswa ini belum mengunggah CV",
+        )
+
+    filename = profile.cv_file_name.split("/")[-1].split("?")[0]
+    if "/" in filename or "\\" in filename or ".." in filename:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="CV tidak ditemukan",
+        )
+
+    path = CV_UPLOAD_DIR / filename
+    if not path.is_file():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Berkas CV tidak ditemukan di server",
+        )
+
+    ext = Path(filename).suffix.lower()
+    media_type = CV_MIME_BY_EXT.get(ext, "application/octet-stream")
+
+    return FileResponse(
+        path=str(path),
+        media_type=media_type,
+        filename=filename,
+        content_disposition_type="inline",
+    )
 

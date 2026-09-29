@@ -3,6 +3,25 @@ from pydantic import BaseModel, ConfigDict, Field
 from src.app.modules.collab.schemas import CollabRequestItem
 from src.app.modules.community.schemas import ServerObj
 
+
+class RoleResponse(BaseModel):
+    id: str
+    title: str
+    emoji: str = ""
+    tagline: str = ""
+    description: str = ""
+    accent: str = ""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class RoleUpsertRequest(BaseModel):
+    title: str = Field(..., min_length=1)
+    emoji: str = ""
+    tagline: str = ""
+    description: str = ""
+    accent: str = ""
+
 class StudentRoadmap(BaseModel):
     title: str = ""
     completed: int = 0
@@ -10,7 +29,8 @@ class StudentRoadmap(BaseModel):
 
 class StudentGithub(BaseModel):
     repos: int = 0
-    commits: int = 0
+    # Nullable: `github_stats.total_commits` tidak lagi diisi angka karangan.
+    commits: Optional[int] = None
     top_languages: list[str] = Field(default_factory=list, serialization_alias="topLanguages", validation_alias="topLanguages")
 
     model_config = ConfigDict(populate_by_name=True)

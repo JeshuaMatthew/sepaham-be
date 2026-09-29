@@ -1,12 +1,14 @@
 import uuid
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, File, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.database import get_db
 from src.app.shared.dependencies import CurrentUser
 from src.app.modules.community import service
 from src.app.modules.community.schemas import (
+    ChatAttachmentResponse,
     CommunityMineResponse,
+    DiscoverServersResponse,
     JoinServerResponse,
     CreateInviteResponse,
     MessageResponse,
@@ -27,6 +29,14 @@ async def get_my_communities(
     db: AsyncSession = Depends(get_db),
 ):
     return await service.get_my_communities(db, user.id)
+
+@community_router.get("/servers", response_model=DiscoverServersResponse, status_code=status.HTTP_200_OK)
+async def discover_servers(
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+):
+    """ Semua server yang bisa diikuti (belum tentu user sudah anggota). """
+    return await service.discover_servers(db, user.id)
 
 @community_router.post("/servers/{id}/join", response_model=JoinServerResponse, status_code=status.HTTP_200_OK)
 async def join_server(
@@ -57,9 +67,13 @@ async def accept_invite(
 @chat_router.get("/channels/{channel_id}/messages", response_model=list[MessageResponse], status_code=status.HTTP_200_OK)
 async def get_channel_messages(
     channel_id: str,
+    user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ):
-    return await service.get_channel_messages(db, channel_id)
+    # Wajib `CurrentUser` + cek anggota di service. Sebelumnya route ini tanpa
+    # dependency apa pun, jadi riwayat channel (termasuk channel anonim) bisa
+    # dibaca siapa pun yang tahu id-nya.
+    return await service.get_channel_messages(db, user.id, channel_id)
 
 @chat_router.post("/channels/{channel_id}/messages", response_model=MessageResponse, status_code=status.HTTP_201_CREATED)
 async def post_channel_message(
@@ -69,6 +83,17 @@ async def post_channel_message(
     db: AsyncSession = Depends(get_db),
 ):
     return await service.post_channel_message(db, user.id, channel_id, req)
+
+@chat_router.post("/chat/attachments", response_model=ChatAttachmentResponse, status_code=status.HTTP_201_CREATED)
+async def upload_chat_attachment(
+    user: CurrentUser,
+    file: UploadFile = File(...),
+):
+    # Endpoint ini butuh auth supaya tidak jadi hosting berkas anonim.
+    # `user` tidak dipakai selain itu — kepemilikan berkas tidak dilacak,
+    # URL-nya yang menjadi bukti saat pesan dikirim.
+    return await service.upload_chat_attachment(file)
+
 
 # --- DM Chat Endpoints ---
 

@@ -17,24 +17,6 @@ class Role(Base):
     tech_stack = Column(ARRAY(Text), nullable=False, default=list, server_default=sa_text("'{}'"))
     sort_order = Column(Integer, nullable=False, default=0, server_default=sa_text("0"))
 
-class OnboardingQuestion(Base):
-    __tablename__ = "onboarding_questions"
-
-    id = Column(Text, primary_key=True)
-    text = Column(Text, nullable=False)
-    role_id = Column(Text, ForeignKey("roles.id", ondelete="CASCADE"), nullable=False)
-    sort_order = Column(Integer, nullable=False, default=0, server_default=sa_text("0"))
-
-    role = relationship("Role")
-
-class Hobby(Base):
-    __tablename__ = "hobbies"
-
-    id = Column(Text, primary_key=True)
-    label = Column(Text, nullable=False)
-    emoji = Column(Text, nullable=False, default="", server_default=sa_text("''"))
-    sort_order = Column(Integer, nullable=False, default=0, server_default=sa_text("0"))
-
 class UserPreference(Base):
     __tablename__ = "user_preferences"
 

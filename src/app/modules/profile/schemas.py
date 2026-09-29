@@ -3,6 +3,10 @@ from typing import Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 class ProfileResponse(BaseModel):
+    # `id` dipakai frontend untuk menandai pesan miliknya sendiri. Tanpa ini
+    # frontend harus memakai id hardcoded "me" yang tidak pernah sama dengan
+    # `authorId` yang dikirim server.
+    id: str
     avatar_url: str = Field(default="", serialization_alias="avatarUrl", validation_alias="avatarUrl")
     name: str
     username: str = ""

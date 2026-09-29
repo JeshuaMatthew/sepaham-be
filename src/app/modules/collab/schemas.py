@@ -2,6 +2,10 @@ from typing import Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 class AuthorObj(BaseModel):
+    # `id` nullable karena request seed lama punya `author_id = NULL`. Kalau
+    # tidak ada, tombol "Gabung via DM" harus dinonaktifkan di UI — bukan
+    # menebak user dari nama.
+    id: Optional[str] = None
     name: str
     avatar: str = ""
     role: str = ""

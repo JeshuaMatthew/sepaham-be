@@ -19,3 +19,11 @@ async def connect_github(
     db: AsyncSession = Depends(get_db),
 ):
     return await service.connect_github(db, user.id, req)
+
+@router.delete("/connect", status_code=status.HTTP_204_NO_CONTENT)
+async def disconnect_github(
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+):
+    await service.disconnect_github(db, user.id)
+

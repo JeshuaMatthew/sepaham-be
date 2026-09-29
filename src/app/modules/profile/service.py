@@ -27,6 +27,10 @@ async def get_profile(db: AsyncSession, user_id: uuid.UUID) -> ProfileResponse:
         await db.refresh(profile)
 
     return ProfileResponse(
+        # `id` dipakai frontend untuk menandai pesan miliknya sendiri. Tanpa
+        # ini frontend harus memakai id hardcoded "me" yang tidak pernah sama
+        # dengan `authorId` yang dikirim server.
+        id=str(user.id),
         avatar_url=profile.avatar_url or "",
         name=user.name,
         username=profile.username or "",
@@ -132,6 +136,13 @@ async def upload_cv(db: AsyncSession, user_id: uuid.UUID, file: UploadFile) -> C
     profile.cv_uploaded_at = now
 
     await db.commit()
+
+    try:
+        from src.app.modules.badges.service import award_badges_for_user
+
+        await award_badges_for_user(db, user_id)
+    except Exception:
+        pass
 
     return CVResponse(
         fileName=saved_file_name,
