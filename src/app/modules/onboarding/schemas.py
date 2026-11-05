@@ -35,9 +35,9 @@ class QuestionItem(BaseModel):
     pillar_id: str
     fact_id: str
     question_text: str
-    question_type: str
-    options: Optional[Any] = None
     sort_order: int = 0
+    question_type: str = "binary"
+    options: Optional[Any] = None
     weight: float = 1.0
 
 

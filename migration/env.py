@@ -2,13 +2,9 @@ import alembic_postgresql_enum
 from src.app.core.database import Base
 from src.app.modules.auth.entity import User
 from src.app.modules.profile.entity import Profile
-from src.app.modules.badges.entity import Badge
-from src.app.modules.userBadge.entity import UserBadge
-import src.app.modules.github.entity
 import src.app.modules.catalog.entity
 import src.app.modules.roadmap.entity
-import src.app.modules.community.entity
-import src.app.modules.collab.entity
+import src.app.modules.onboarding.entity
 
 import asyncio
 from logging.config import fileConfig

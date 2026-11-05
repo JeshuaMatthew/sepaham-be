@@ -8,6 +8,7 @@ class Role(Base):
     __tablename__ = "roles"
 
     id = Column(Text, primary_key=True)
+    pillar_id = Column(Text, ForeignKey("pillars.id", ondelete="SET NULL"), nullable=True)
     title = Column(Text, nullable=False)
     emoji = Column(Text, nullable=False, default="", server_default=sa_text("''"))
     tagline = Column(Text, nullable=False, default="", server_default=sa_text("''"))

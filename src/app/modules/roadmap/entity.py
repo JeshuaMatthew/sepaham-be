@@ -54,9 +54,7 @@ class RoadmapNode(Base):
     always_unlocked = Column(Boolean, nullable=False, default=False, server_default=sa_text("false"))
     optional = Column(Boolean, nullable=False, default=False, server_default=sa_text("false"))
     article = Column(Text, nullable=True)
-    submission = Column(JSONB, nullable=True)
     resources = Column(JSONB, nullable=True)
-    missions = Column(JSONB, nullable=True)
     sort_order = Column(Integer, nullable=False, default=0, server_default=sa_text("0"))
 
     roadmap = relationship("Roadmap", back_populates="nodes")
@@ -82,34 +80,3 @@ class RoadmapEdge(Base):
     __table_args__ = (
         UniqueConstraint("roadmap_id", "edge_key", name="uq_roadmap_edge"),
     )
-
-class Submission(Base):
-    __tablename__ = "submissions"
-
-    id = Column(UUID(as_uuid=True), primary_key=True, server_default=sa_text("gen_random_uuid()"))
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    roadmap_id = Column(Text, ForeignKey("roadmaps.id", ondelete="CASCADE"), nullable=False)
-    node_key = Column(Text, nullable=False)
-    done = Column(Boolean, nullable=False, default=False, server_default=sa_text("false"))
-    file_name = Column(Text, nullable=True)
-    text_answer = Column(Text, nullable=True)
-    score = Column(Integer, nullable=True)
-    quiz_answers = Column(JSONB, nullable=True)
-    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=sa_text("now()"), onupdate=sa_text("now()"))
-
-    user = relationship("User")
-    roadmap = relationship("Roadmap")
-
-    __table_args__ = (
-        UniqueConstraint("user_id", "roadmap_id", "node_key", name="uq_user_roadmap_submission"),
-    )
-
-class RoadmapActivity(Base):
-    __tablename__ = "roadmap_activity"
-
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
-    roadmap_id = Column(Text, ForeignKey("roadmaps.id", ondelete="CASCADE"), primary_key=True)
-    last_active_at = Column(DateTime(timezone=True), nullable=False, server_default=sa_text("now()"))
-
-    user = relationship("User")
-    roadmap = relationship("Roadmap")

@@ -1,5 +1,4 @@
-import uuid
-from typing import List, Optional
+from typing import List
 from fastapi import APIRouter, Depends, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -7,65 +6,13 @@ from src.app.core.database import get_db
 from src.app.shared.dependencies import FacultyUser
 from src.app.modules.faculty import service
 from src.app.modules.faculty.schemas import (
-    FacultyStudentsResponse,
-    FacultyServersResponse,
-    BanServerResponse,
-    FacultyRequestsResponse,
-    CloseCollabRequestResponse,
     RoleResponse,
     RoleUpsertRequest,
 )
 
 router = APIRouter(prefix="/api/faculty", tags=["Faculty"])
 
-@router.get("/students", response_model=FacultyStudentsResponse, status_code=status.HTTP_200_OK)
-async def get_students(
-    faculty: FacultyUser,
-    db: AsyncSession = Depends(get_db),
-):
-    return await service.get_students(db)
-
-@router.get("/students/{student_id}/cv")
-async def get_student_cv(
-    student_id: uuid.UUID,
-    faculty: FacultyUser,
-    db: AsyncSession = Depends(get_db),
-):
-    """Unduh berkas CV asli milik mahasiswa."""
-    return await service.get_student_cv(db, student_id)
-
-@router.get("/servers", response_model=FacultyServersResponse, status_code=status.HTTP_200_OK)
-async def get_servers(
-    faculty: FacultyUser,
-    db: AsyncSession = Depends(get_db),
-):
-    return await service.get_servers(db)
-
-@router.post("/servers/{id}/ban", response_model=BanServerResponse, status_code=status.HTTP_200_OK)
-async def ban_server(
-    id: str,
-    faculty: FacultyUser,
-    db: AsyncSession = Depends(get_db),
-):
-    return await service.ban_server(db, faculty.id, id)
-
-@router.get("/requests", response_model=FacultyRequestsResponse, status_code=status.HTTP_200_OK)
-async def get_requests(
-    faculty: FacultyUser,
-    db: AsyncSession = Depends(get_db),
-):
-    return await service.get_requests(db)
-
-@router.post("/requests/{id}/close", response_model=CloseCollabRequestResponse, status_code=status.HTTP_200_OK)
-async def close_request(
-    id: uuid.UUID,
-    faculty: FacultyUser,
-    db: AsyncSession = Depends(get_db),
-):
-    return await service.close_request(db, id)
-
-
-# ===== Role Management =====
+# ===== Role Management (F#06) =====
 
 @router.get("/roles", response_model=List[RoleResponse], status_code=status.HTTP_200_OK)
 async def list_roles(
@@ -101,4 +48,3 @@ async def delete_role(
     db: AsyncSession = Depends(get_db),
 ):
     return await service.delete_role(db, role_id)
-

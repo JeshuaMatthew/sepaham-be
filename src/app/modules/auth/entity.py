@@ -57,6 +57,5 @@ class User(Base):
     )
 
     profile = relationship("Profile", back_populates="user", uselist=False)
-    user_badges = relationship("UserBadge", back_populates="user", cascade="all, delete-orphan")
 
     

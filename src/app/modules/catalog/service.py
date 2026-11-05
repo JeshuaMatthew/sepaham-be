@@ -6,25 +6,11 @@ from sqlalchemy.dialects.postgresql import insert
 
 from src.app.modules.catalog.entity import (
     Role,
-    InternshipContact,
-    DevQuote,
-    AiInternship,
-    LofiTrack,
     UserPreference,
 )
-from src.app.modules.badges.entity import Badge
-from src.app.modules.github.entity import GithubStats
 from src.app.modules.catalog.schemas import (
     RoleItem,
     RolesResponse,
-    InternshipContactItem,
-    InternshipsResponse,
-    DevQuoteItem,
-    AiInternshipItem,
-    AiNudgeItem,
-    AiFeedResponse,
-    LofiTrackItem,
-    LofiTracksResponse,
     UserPreferenceResponse,
     UserPreferenceUpdateRequest,
 )
@@ -48,133 +34,6 @@ async def get_roles(db: AsyncSession) -> RolesResponse:
         ]
     )
 
-async def get_badges_catalog(db: AsyncSession) -> dict:
-    """
-    Katalog badge yang tersedia.
-
-    Field `earned` dihapus. Endpoint ini tidak butuh autentikasi, jadi tidak
-    bisa tahu badge milik siapa — tapi field itu selalu `False`, dan UI
-    memakainya untuk menampilkan status "belum didapat". Hasilnya setiap user
-    melihat semua badge sebagai belum pernah dimiliki, dan tidak ada bedanya
-    dengan benar-benar belum memilikinya.
-
-    Badge milik user ada di `GET /api/profile/badges`, yang memang per-user.
-    """
-    res = await db.execute(select(Badge).order_by(Badge.sort_order.asc()))
-    badges = res.scalars().all()
-    return {
-        "badges": [
-            {
-                "id": b.id,
-                "name": b.name,
-                "description": b.description or "",
-                "icon": b.icon or "",
-                "tier": b.tier.value if hasattr(b.tier, "value") else str(b.tier),
-            }
-            for b in badges
-        ]
-    }
-
-async def get_internships(db: AsyncSession) -> InternshipsResponse:
-    res = await db.execute(select(InternshipContact).order_by(InternshipContact.id.asc()))
-    contacts = res.scalars().all()
-    return InternshipsResponse(
-        contacts=[
-            InternshipContactItem(
-                id=c.id,
-                company=c.company,
-                emoji=c.emoji or "",
-                position=c.position,
-                roleId=c.role_id,
-                location=c.location or "",
-                type=c.type or "",
-                pic=c.pic or "",
-                contact=c.contact or "",
-                note=c.note,
-            )
-            for c in contacts
-        ]
-    )
-
-async def _build_streak_nudge(db: AsyncSession, user_id: uuid.UUID) -> AiNudgeItem:
-    """
-    Bangun kartu streak dari data GitHub user yang sebenarnya.
-
-    Sebelumnya `AiNudgeItem()` dipakai tanpa argumen sehingga semua user melihat
-    "17-day streak" yang sama, padahal profil mereka melaporkan angka lain
-    (mis. `github_stats.current_streak = 7`).
-    """
-    res = await db.execute(select(GithubStats).where(GithubStats.user_id == user_id))
-    stats = res.scalar_one_or_none()
-
-    if stats is None:
-        # Tanpa data GitHub tidak ada aksi nyata yang bisa dikerjakan user
-        # (tombol "Connect GitHub" sengaja tidak ada di UI), jadi jangan
-        # menjanjikan koneksi lewat copy atau CTA.
-        return AiNudgeItem(
-            title="Belum ada streak",
-            message="Belum ada data commit GitHub yang terhubung ke akunmu.",
-            streak=0,
-            cta="",
-        )
-
-    streak = stats.current_streak or 0
-    if streak <= 0:
-        return AiNudgeItem(
-            title="Mulai streak hari ini",
-            message="Belum ada commit hari ini. Satu commit saja cukup untuk memulai.",
-            streak=0,
-        )
-
-    return AiNudgeItem(
-        title="Keep your streak alive!",
-        message=(
-            f"You have committed {streak} days in a row. "
-            f"Longest streak: {stats.longest_streak or 0} days."
-        ),
-        streak=streak,
-    )
-
-
-async def get_ai_feed(db: AsyncSession, user_id: uuid.UUID) -> AiFeedResponse:
-    quotes_res = await db.execute(select(DevQuote))
-    quotes = quotes_res.scalars().all()
-
-    ai_res = await db.execute(select(AiInternship).order_by(AiInternship.match_percent.desc()))
-    internships = ai_res.scalars().all()
-
-    return AiFeedResponse(
-        quotes=[DevQuoteItem(text=q.text, author=q.author) for q in quotes],
-        nudge=await _build_streak_nudge(db, user_id),
-        internships=[
-            AiInternshipItem(
-                id=i.id,
-                company=i.company,
-                emoji=i.emoji or "",
-                role=i.role,
-                location=i.location or "",
-                type=i.type or "",
-                matchPercent=i.match_percent,
-                tags=i.tags or [],
-            )
-            for i in internships
-        ],
-    )
-
-async def get_lofi(db: AsyncSession) -> LofiTracksResponse:
-    res = await db.execute(select(LofiTrack).order_by(LofiTrack.id.asc()))
-    tracks = res.scalars().all()
-    return LofiTracksResponse(
-        tracks=[
-            LofiTrackItem(
-                id=t.id,
-                title=t.title,
-                artist=t.artist or "",
-            )
-            for t in tracks
-        ]
-    )
-
 async def get_preferences(db: AsyncSession, user_id: uuid.UUID) -> Optional[UserPreferenceResponse]:
     res = await db.execute(select(UserPreference).where(UserPreference.user_id == user_id))
     pref = res.scalar_one_or_none()
@@ -185,6 +44,7 @@ async def get_preferences(db: AsyncSession, user_id: uuid.UUID) -> Optional[User
         roleTitle=pref.role_title or "",
         roleEmoji=pref.role_emoji or "",
         roleScores=pref.role_scores or {},
+        roleScores={},
     )
 
 async def upsert_preferences(
@@ -224,4 +84,5 @@ async def upsert_preferences(
         roleTitle=row.role_title or "",
         roleEmoji=row.role_emoji or "",
         roleScores=row.role_scores or {},
+        roleScores={},
     )

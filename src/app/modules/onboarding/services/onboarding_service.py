@@ -1,6 +1,7 @@
 import uuid
 from typing import Any, Dict, List, Optional
 from fastapi import HTTPException, status
+from sqlalchemy.orm import selectinload
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.dialects.postgresql import insert
@@ -92,8 +93,6 @@ def _to_item(q: Question) -> QuestionItem:
         pillar_id=q.pillar_id or "",
         fact_id=q.fact_id or "",
         question_text=q.question_text,
-        question_type=q.question_type,
-        options=q.options,
         sort_order=q.sort_order or 0,
     )
 
@@ -228,10 +227,7 @@ async def replace_question_bank(
                 pillar_id=item.pillar_id,
                 fact_id=item.fact_id,
                 question_text=item.question_text.strip(),
-                question_type=item.question_type,
-                options=options,
                 sort_order=sort_order,
-                weight=item.weight,
             )
         )
     await db.commit()
@@ -243,31 +239,19 @@ async def evaluate_assessment(
 ) -> EvaluateResponse:
     user_facts = {a.fact_id for a in req.answers if a.value}
 
-    # Kumpulkan bobot per fact dari tabel questions
-    fact_weights: Dict[str, float] = {}
-    if user_facts:
-        fact_rows = (
-            await db.execute(
-                select(Question.fact_id, Question.weight).where(
-                    Question.fact_id.in_(user_facts)
-                )
-            )
-        ).all()
-        fact_weights = {fid: w for fid, w in fact_rows}
-
-    rules_res = await db.execute(select(Rule))
+    rules_res = await db.execute(select(Rule).options(selectinload(Rule.rule_facts)))
     rules_list = rules_res.scalars().all()
-    rules_data = [
-        {"role_id": r.role_id, "conditions": r.conditions or {}}
-        for r in rules_list
-        if r.role_id
-    ]
+    rules_data = []
+    for r in rules_list:
+        if not r.role_id:
+            continue
+        conds = {rf.fact_id: rf.expected_value for rf in r.rule_facts} if r.rule_facts else (r.conditions or {})
+        rules_data.append({"role_id": r.role_id, "conditions": conds, "priority": getattr(r, "priority", 1)})
 
     match = forward_chaining_match(
         user_facts=user_facts,
         rules_from_db=rules_data,
-        fallback_role="backend_dev",
-        fact_weights=fact_weights,
+        fallback_role="backend-engineer",
     )
 
     rec_role_id = match["recommended_role"]
@@ -306,14 +290,12 @@ async def evaluate_assessment(
             role_id=rec_role_id,
             role_title=role_name,
             role_emoji=role_emoji,
-            role_scores=match["all_scores"],
         ).on_conflict_do_update(
             index_elements=["user_id"],
             set_={
                 "role_id": rec_role_id,
                 "role_title": role_name,
                 "role_emoji": role_emoji,
-                "role_scores": match["all_scores"],
             },
         )
         await db.execute(stmt)

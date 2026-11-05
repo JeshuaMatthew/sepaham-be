@@ -1,6 +1,7 @@
 import uuid
 from datetime import datetime, timezone
-from sqlalchemy import Column, String, Text, Float, Integer, DateTime, ForeignKey
+from sqlalchemy import Column, String, Text, Float, Integer, DateTime, ForeignKey, Boolean
+from sqlalchemy import Column, String, Text, Integer, DateTime, ForeignKey, Boolean
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 from src.app.core.database import Base
@@ -24,6 +25,7 @@ class Fact(Base):
     category = Column(String, nullable=True)
 
     questions = relationship("Question", back_populates="fact")
+    rule_facts = relationship("RuleFact", back_populates="fact", cascade="all, delete-orphan")
 
 
 class Question(Base):
@@ -50,8 +52,22 @@ class Rule(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     role_id = Column(String, ForeignKey("roles.id"), nullable=True)
-    conditions = Column(JSONB, nullable=False)
-    min_confidence_score = Column(Float, nullable=True)
+    priority = Column(Integer, nullable=False, default=1, server_default="1")
+    conditions = Column(JSONB, nullable=True)
+
+    rule_facts = relationship("RuleFact", back_populates="rule", cascade="all, delete-orphan")
+
+
+class RuleFact(Base):
+    __tablename__ = "rule_facts"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    rule_id = Column(UUID(as_uuid=True), ForeignKey("rules.id", ondelete="CASCADE"), nullable=False)
+    fact_id = Column(String(50), ForeignKey("facts.id", ondelete="CASCADE"), nullable=False)
+    expected_value = Column(Boolean, nullable=False, default=True)
+
+    rule = relationship("Rule", back_populates="rule_facts")
+    fact = relationship("Fact", back_populates="rule_facts")
 
 
 class UserOnboardingSession(Base):

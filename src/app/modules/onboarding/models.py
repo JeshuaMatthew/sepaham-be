@@ -3,6 +3,7 @@ from src.app.modules.onboarding.entity import (
     Fact,
     Question,
     Rule,
+    RuleFact,
     UserOnboardingSession,
 )
 
@@ -11,5 +12,6 @@ __all__ = [
     "Fact",
     "Question",
     "Rule",
+    "RuleFact",
     "UserOnboardingSession",
 ]

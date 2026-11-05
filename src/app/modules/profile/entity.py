@@ -1,4 +1,4 @@
-from sqlalchemy import Column, text, Text, DateTime, ForeignKey, VARCHAR, Integer, Boolean
+from sqlalchemy import Column, text, Text, DateTime, ForeignKey, Integer
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from src.app.core.database import Base
@@ -64,28 +64,6 @@ class Profile(Base):
         nullable=False,
         default="",
         server_default=text("''"),
-    )
-    
-    github_connected = Column(
-        Boolean,
-        nullable=False,
-        default=False,
-        server_default=text("false"),
-    )
-    
-    github_username = Column(
-        Text,
-        nullable=True,
-    )
-    
-    cv_file_name = Column(
-        Text,
-        nullable=True,
-    )
-    
-    cv_uploaded_at = Column(
-        DateTime(timezone=True), 
-        nullable=True,
     )
     
     updated_at = Column(
